@@ -1,0 +1,143 @@
+@startuml
+skinparam componentStyle rectangle
+skinparam handwritten false
+skinparam shadowing false
+skinparam defaultFontName "Arial"
+
+' --------------------------------------------------
+' PAQUETES Y COMPONENTES
+' --------------------------------------------------
+
+package "Ingesta & Procesamiento" {
+  [Decanter Colector] as DC
+  [Decanter Processor] as DP
+  [Acknowledge Schedule] as AckSched
+  [Mapa con las alarmas] as AlarmMap
+  [Registro Histórico (Appender)] as AppenderHist
+  [Registro Runtime (Appender)] as AppenderRT
+}
+
+package "Almacenamiento & Caché" {
+  database "Repositorio\nSQL\n(> 30 días)" as SQL
+  database "Redis" as Redis
+}
+
+package "Fuentes de Datos & Controladores" {
+  [Merlot (Drivers:\n• S7\n• eip\n• ab-eth)] as Merlot
+  [Servidor de Alarmas\n(Source de los pva)] as AlarmServer
+  queue "Kafka" as Kafka
+}
+
+package "Conectividad & APIs (SSL)" {
+  [Websocket (SSL)] as WS
+  [MQTT (SSL)] as MQTT
+  [gRPC (SSL)] as GRPC
+  [REST (SSL)] as REST
+}
+
+package "Clientes & Frontend" {
+  [Smartphone] as SmartPhone
+  [Malbec\n(Written RPC)] as Malbec
+  [Web Page] as WebPage
+  [Login] as Login
+  [Phoebus Widget\n(Representación visual de las alarmas)] as PhoebusWidget
+  component "Phoebus\n(Vista)" as PhoebusVista
+}
+
+' --------------------------------------------------
+' ROLES / ACTORES
+' --------------------------------------------------
+actor "Auditor" as UserAuditor
+actor "Operador" as UserOperador
+actor "Administrador\ndel Sistema" as UserAdmin
+
+' --------------------------------------------------
+' NOTAS
+' --------------------------------------------------
+note left of DC
+  <b>Nota:</b>
+  ¿Qué pasa si se cae
+  el colector?
+end note
+
+note bottom of Redis
+  <b>Nota:</b>
+  Borrar caché al 1 GB
+  o al resetear el PC.
+end note
+
+note bottom of PhoebusWidget
+  <b>Nota:</b>
+  Mostrar las últimas
+  100 alarmas (leer en orden de disparo).
+end note
+
+note bottom of AlarmServer
+  <b>Alarma (pva):</b>
+  • severidad
+  • message
+  • value
+end note
+
+' --------------------------------------------------
+' FLUJOS / RELACIONES
+' --------------------------------------------------
+
+' Ingesta y Decanter
+Kafka --> DC : leer tópico
+DC --> DP : envía el registro del tópico
+DP --> Merlot : Construye evento del broker de Merlot (Event OSGi)
+DP --> AckSched
+
+' Distribución a Appenders y Caché
+AckSched --> AlarmMap : OK && ACK\n&& latch == true (Registrar)
+AckSched --> AppenderHist
+AckSched --> AppenderRT
+
+AppenderHist --> SQL : Registra en
+AppenderRT --> [Cliente Redis\n(Lettuce)] : Registra en
+[Cliente Redis\n(Lettuce)] --> Redis : escribe
+
+' Conexión con Phoebus
+PhoebusVista --> Kafka
+Redis --> PhoebusWidget : leer en orden de disparo
+
+' Capa de APIs y Clientes hacia SQL
+SQL <-- WS : Select
+SQL <-- MQTT : Select
+SQL <-- GRPC : Select
+SQL <-- REST : Select
+
+WS --> SmartPhone
+MQTT --> Malbec : (existe el módulo)
+GRPC --> WebPage
+REST --> WebPage : (existe el módulo)
+
+' Autenticación & Usuarios
+Login --> SmartPhone
+Login --> Malbec
+Login --> WebPage
+
+UserAuditor --> Login : • Consultar KPIs\n• Alarmas problemáticas\n• Bitácora de cambios\n• Generar reporte auditoría\n• Visualizar histórico
+UserOperador --> Login : • Visualizar histórico
+UserAdmin --> Login : • Gestionar usuarios y permisos\n• Habilitar servicios para obtener datos
+
+SQL ..> UserAdmin : Usuarios / Roles
+SQL ..> UserAuditor : Auditor / Operador
+
+' Sincronización PLC / SCADA HMI
+frame "Subflujo: Sincronización el PLC" {
+  actor "Operador" as OpHMI
+  [SCADA HMI] as HMI
+  [ConcurrentHashMap\n(Mapa con alarma)] as MemMap
+  [Acknowledge Schedule] as AckSchedHMI
+  queue "Kafka (Tópico)" as KafkaHMI
+
+  OpHMI --> HMI : Ack a la alarma
+  HMI --> MemMap : Agrega 3 campos de tiempo:\n• trigger\n• ack\n• back tiempo
+  MemMap --> AckSchedHMI : • latch: solve &&\n• severity != OK && ACK && !contains(name)\n(Registrarla)
+  AckSchedHMI --> KafkaHMI : MAJOR_ACK\nMINOR_ACK
+  AlarmServer --> HMI : • Activa la escritura del EPC (init cond. de conexión)\n• Coloca tiempo -> ack -> realiza la resta y pone en banda
+}
+
+@enduml
