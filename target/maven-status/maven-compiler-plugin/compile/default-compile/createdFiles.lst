@@ -1,0 +1,10 @@
+org\apache\plc4x\merlot\alarm\isa18_2\phoebus_widget\AlarmWidgetDescriptor.class
+org\apache\plc4x\merlot\alarm\isa18_2\model\AlarmTableWidget$1.class
+org\apache\plc4x\merlot\alarm\isa18_2\MerlotAlarmISA18_2Widget.class
+org\apache\plc4x\merlot\alarm\isa18_2\api\WidgetBehavior.class
+org\apache\plc4x\merlot\alarm\isa18_2\phoebus_widget\AlarmWidget.class
+org\apache\plc4x\merlot\alarm\isa18_2\phoebus_widget_service\AlarmWidgetRepresentationService.class
+org\apache\plc4x\merlot\alarm\isa18_2\phoebus_widget\AlarmWidgetRepresentation.class
+org\apache\plc4x\merlot\alarm\isa18_2\model\AlarmTableWidget.class
+org\apache\plc4x\merlot\alarm\isa18_2\phoebus_widget_service\AlarmWidgetService.class
+org\apache\plc4x\merlot\alarm\isa18_2\model\Alarm.class
