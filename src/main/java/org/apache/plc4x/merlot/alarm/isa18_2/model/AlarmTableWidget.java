@@ -20,8 +20,8 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
     private final ObservableList<Alarm> alarmData;
 
     //Redis client
-    private final RedisClient redisClient;
-    private final StatefulRedisPubSubConnection<String, String> pubSubConnection;
+//    private final RedisClient redisClient;
+//    private final StatefulRedisPubSubConnection<String, String> pubSubConnection;
 
     public AlarmTableWidget(String hostandPortRedis, String channelRedis) {
 
@@ -80,26 +80,26 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
         // 4. Añadir la tabla al StackPane
         getChildren().add(alarmTable);
 
-        redisClient = RedisClient.create(hostandPortRedis);
-
-        // 2. Crear una conexión dedicada para Pub/Sub
-        pubSubConnection = redisClient.connectPubSub();
-
-        // 3. Añadir un listener para los mensajes
-        pubSubConnection.addListener(new RedisPubSubAdapter<String, String>() {
-            @Override
-            public void message(String channel, String message) {
-                Platform.runLater(() -> {
-                    Alarm nuevaAlarma = parseAlarm(message);
-                    if (nuevaAlarma != null) {
-                        addAlarm(nuevaAlarma);
-                    }
-                });
-            }
-        });
-
-        // 4. Suscribirse al canal donde se publican las alarmas
-        pubSubConnection.sync().subscribe(channelRedis);
+//        redisClient = RedisClient.create(hostandPortRedis);
+//
+//        // 2. Crear una conexión dedicada para Pub/Sub
+//        pubSubConnection = redisClient.connectPubSub();
+//
+//        // 3. Añadir un listener para los mensajes
+//        pubSubConnection.addListener(new RedisPubSubAdapter<String, String>() {
+//            @Override
+//            public void message(String channel, String message) {
+//                Platform.runLater(() -> {
+//                    Alarm nuevaAlarma = parseAlarm(message);
+//                    if (nuevaAlarma != null) {
+//                        addAlarm(nuevaAlarma);
+//                    }
+//                });
+//            }
+//        });
+//
+//        // 4. Suscribirse al canal donde se publican las alarmas
+//        pubSubConnection.sync().subscribe(channelRedis);
     }
 
     @Override
@@ -131,11 +131,11 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
 
     @Override
     public void shutdown() {
-        if (pubSubConnection != null) {
-            pubSubConnection.close();
-        }
-        if (redisClient != null) {
-            redisClient.shutdown();
-        }
+//        if (pubSubConnection != null) {
+//            pubSubConnection.close();
+//        }
+//        if (redisClient != null) {
+//            redisClient.shutdown();
+//        }
     }
 }
