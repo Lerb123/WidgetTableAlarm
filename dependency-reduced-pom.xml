@@ -19,6 +19,8 @@
               <artifactSet>
                 <includes>
                   <include>io.lettuce:*</include>
+                  <include>io.netty:*</include>
+                  <include>io.projectreactor:*</include>
                   <include>org.epics:*</include>
                 </includes>
               </artifactSet>

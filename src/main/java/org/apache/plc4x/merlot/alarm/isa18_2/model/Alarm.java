@@ -27,23 +27,45 @@ public class Alarm {
         this.event = new SimpleStringProperty(event);
     }
 
-    public SimpleStringProperty getDate() {
+    public SimpleStringProperty dateProperty() {
         return date;
     }
 
-    public SimpleStringProperty getTime() {
+    public SimpleStringProperty timeProperty() {
         return time;
     }
 
-    public SimpleIntegerProperty getPriority() {
+    public SimpleIntegerProperty priorityProperty() {
         return priority;
     }
 
-    public SimpleStringProperty getSource() {
+    public SimpleStringProperty sourceProperty() {
         return source;
     }
 
-    public SimpleStringProperty getEvent() {
+    public SimpleStringProperty eventProperty() {
         return event;
     }
+
+    // Getters de valor (convención JavaBean)
+    public String getDate() {
+        return date.get();
+    }
+
+    public String getTime() {
+        return time.get();
+    }
+
+    public int getPriority() {
+        return priority.get();
+    }
+
+    public String getSource() {
+        return source.get();
+    }
+
+    public String getEvent() {
+        return event.get();
+    }
+
 }

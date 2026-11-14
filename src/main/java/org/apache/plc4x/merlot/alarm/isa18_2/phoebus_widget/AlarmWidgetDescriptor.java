@@ -12,7 +12,7 @@ import org.csstudio.display.builder.model.WidgetDescriptor;
 public class AlarmWidgetDescriptor extends WidgetDescriptor {
 
     public AlarmWidgetDescriptor() {
-        super(AlarmWidget.WIDGET_TYPE, WidgetCategory.MONITOR, "TableAlarm", "/icons/d.png", "Table Alarms");
+        super(AlarmWidget.WIDGET_TYPE, WidgetCategory.MONITOR, "Table Alarm", "/icon/d.png", "Table Alarms");
     }
 
     @Override

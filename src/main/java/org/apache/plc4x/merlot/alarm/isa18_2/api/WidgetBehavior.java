@@ -5,6 +5,7 @@
 package org.apache.plc4x.merlot.alarm.isa18_2.api;
 
 import java.util.List;
+import java.util.Map;
 import org.apache.plc4x.merlot.alarm.isa18_2.model.Alarm;
 
 /**
@@ -32,7 +33,7 @@ public interface WidgetBehavior {
      * @param messageFromRedis String obtenido del servidor Redis
      * @return Alarm lista para insertarla en la tabla
      */
-    Alarm parseAlarm(String messageFromRedis);
+    Alarm parseAlarm(Map<String, String> body);
 
     /**
      * Limpia la tabla, opcion usada cuando inicia el widget
