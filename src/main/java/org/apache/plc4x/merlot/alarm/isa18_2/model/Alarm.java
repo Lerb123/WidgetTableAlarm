@@ -1,71 +1,40 @@
-/*
- * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
- * Click nbfs://nbhost/SystemFileSystem/Templates/Classes/Class.java to edit this template
- */
 package org.apache.plc4x.merlot.alarm.isa18_2.model;
 
-import javafx.beans.property.SimpleIntegerProperty;
-import javafx.beans.property.SimpleStringProperty;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 
-/**
- *
- * @author luis
- */
+
 public class Alarm {
 
-    private final SimpleStringProperty date;
-    private final SimpleStringProperty time;
-    private final SimpleIntegerProperty priority;
-    private final SimpleStringProperty source;
-    private final SimpleStringProperty event;
+    private final Map<String, String> fields;
 
-    public Alarm(String date, String time, int priority, String source, String event) {
-        this.date = new SimpleStringProperty(date);
-        this.time = new SimpleStringProperty(time);
-        this.priority = new SimpleIntegerProperty(priority);
-        this.source = new SimpleStringProperty(source);
-        this.event = new SimpleStringProperty(event);
+    public Alarm(Map<String, String> fields) {
+        this.fields = Collections.unmodifiableMap(new HashMap<>(fields));
     }
 
-    public SimpleStringProperty dateProperty() {
-        return date;
+    /** Valor del campo, o cadena vacía si no existe. */
+    public String get(String key) {
+        return fields.getOrDefault(key, "");
     }
 
-    public SimpleStringProperty timeProperty() {
-        return time;
+    public Map<String, String> getFields() {
+        return fields;
     }
 
-    public SimpleIntegerProperty priorityProperty() {
-        return priority;
+    public String getLocation() {
+        return get("location");
     }
 
-    public SimpleStringProperty sourceProperty() {
-        return source;
+    public String getPv() {
+        return get("pv");
     }
 
-    public SimpleStringProperty eventProperty() {
-        return event;
+    public String getSeverity() {
+        return get("severity");
     }
 
-    // Getters de valor (convención JavaBean)
-    public String getDate() {
-        return date.get();
+    public String getMessage() {
+        return get("message");
     }
-
-    public String getTime() {
-        return time.get();
-    }
-
-    public int getPriority() {
-        return priority.get();
-    }
-
-    public String getSource() {
-        return source.get();
-    }
-
-    public String getEvent() {
-        return event.get();
-    }
-
 }

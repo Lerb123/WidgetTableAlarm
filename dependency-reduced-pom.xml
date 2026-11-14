@@ -8,7 +8,7 @@
     <plugins>
       <plugin>
         <artifactId>maven-shade-plugin</artifactId>
-        <version>3.6.2</version>
+        <version>${maven.shade.plugin.version}</version>
         <executions>
           <execution>
             <phase>package</phase>
@@ -22,6 +22,8 @@
                   <include>io.netty:*</include>
                   <include>io.projectreactor:*</include>
                   <include>org.epics:*</include>
+                  <include>org.apache.kafka:*</include>
+                  <include>com.fasterxml.jackson.core:*</include>
                 </includes>
               </artifactSet>
               <transformers>
@@ -46,9 +48,9 @@
       <plugin>
         <groupId>org.openjfx</groupId>
         <artifactId>javafx-maven-plugin</artifactId>
-        <version>0.0.8</version>
+        <version>${javafx.maven.plugin.version}</version>
         <configuration>
-          <mainClass>org.apache.plc4x.merlot.alarm.isa18_2.MerlotAlarmISA18_2Widget</mainClass>
+          <mainClass>${exec.mainClass}</mainClass>
         </configuration>
       </plugin>
     </plugins>
@@ -81,13 +83,13 @@
     <dependency>
       <groupId>org.phoebus</groupId>
       <artifactId>app-display-model</artifactId>
-      <version>4.7.4</version>
+      <version>6.0.0-SNAPSHOT</version>
       <scope>compile</scope>
     </dependency>
     <dependency>
       <groupId>org.phoebus</groupId>
       <artifactId>app-display-representation-javafx</artifactId>
-      <version>4.7.4</version>
+      <version>6.0.0-SNAPSHOT</version>
       <scope>compile</scope>
       <exclusions>
         <exclusion>
@@ -102,8 +104,11 @@
     <maven.compiler.release>21</maven.compiler.release>
     <exec.mainClass>org.apache.plc4x.merlot.alarm.isa18_2.MerlotAlarmISA18_2Widget</exec.mainClass>
     <javafx.version>21.0.9</javafx.version>
-    <phoebus.app.display.version>4.7.4</phoebus.app.display.version>
+    <phoebus.app.display.version>6.0.0-SNAPSHOT</phoebus.app.display.version>
     <lettuce.core.version>6.7.1.RELEASE</lettuce.core.version>
-    <pbrawclient.version>0.2.3</pbrawclient.version>
+    <kafka.clients.version>3.9.2</kafka.clients.version>
+    <jackson.databind.version>2.22.2</jackson.databind.version>
+    <maven.shade.plugin.version>3.6.2</maven.shade.plugin.version>
+    <javafx.maven.plugin.version>0.0.8</javafx.maven.plugin.version>
   </properties>
 </project>
