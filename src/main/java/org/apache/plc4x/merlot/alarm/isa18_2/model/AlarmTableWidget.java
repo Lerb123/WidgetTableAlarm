@@ -1,3 +1,19 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.apache.plc4x.merlot.alarm.isa18_2.model;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -44,13 +60,15 @@ import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.plc4x.merlot.alarm.isa18_2.api.WidgetBehavior;
 import org.apache.plc4x.merlot.alarm.isa18_2.phoebus_widget.AlarmWidget.AlarmMode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class AlarmTableWidget extends StackPane implements WidgetBehavior {
-
+    private static final Logger LOGGER = LoggerFactory.getLogger(AlarmTableWidget.class);
     private static final int MAX_ROWS = 100;
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    // Valida que la ruta contenga un PV completo con protocolo sim://, pva:// o loc://
+    //Verifies that the route contains a complete PV with the sim://, pva://, or loc:// protocol
     private static final Pattern PV_SCHEME_PATTERN =
             Pattern.compile("(sim|pva|loc)://.+", Pattern.CASE_INSENSITIVE);
 
@@ -60,40 +78,45 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
     private final TableView<Alarm> alarmTable;
     private final ObservableList<Alarm> alarmData;
 
-    // Parámetros actuales
+    // Current Parameters
     private String bootstrapServers;
     private String topic;
+    private String commandTopic;
+    private volatile String locationFilter = "";
     private volatile AlarmMode mode = AlarmMode.RT;
 
-    // Sesión de consumo y productor de comandos Kafka
+    // Kafka Consumer and Producer Session
     private ConsumerSession session;
     private KafkaProducer<String, String> commandProducer;
 
     private boolean attached = false;
     private boolean disposed = false;
 
-    // Estilo configurable desde las propiedades del widget de Phoebus
+    // Style configurable from the Phoebus widget properties
     private Color headerBackground;
     private Color headerForeground;
     private Font headerFont;
     private Color tableBackground;
     private Font tableFont;
 
-    // Colores configurables por severidad
+    // Configurable colors based on severity
     private Color majorColor = Color.web("#FF0000");
     private Color minorColor = Color.web("#FFFF00");
     private Color invalidColor = Color.web("#333333");
     private Color okColor = Color.web("#90EE90");
 
     public AlarmTableWidget(String bootstrapServers, String topic) {
-        // Evitar tamaños predeterminados rígidos en el StackPane
+        this(bootstrapServers, topic, "");
+    }
+
+    public AlarmTableWidget(String bootstrapServers, String topic, String commandTopic) {
         setMinSize(0, 0);
         setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
 
-        // 1. Lista observable
+        // 1. Observable list, table contents
         alarmData = FXCollections.observableArrayList();
 
-        // 2. Tabla sin tamaño fijo: se adapta al contenedor StackPane
+        // 2. Table with no fixed size: adapts to the StackPane container
         alarmTable = new TableView<>();
         alarmTable.setItems(alarmData);
         alarmTable.setMinSize(0, 0);
@@ -101,10 +124,10 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
         alarmTable.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
         alarmTable.setColumnResizePolicy(TableView.UNCONSTRAINED_RESIZE_POLICY);
 
-        // Los nodos de la cabecera solo existen cuando la tabla tiene skin
+        // Header nodes exist only when the table has a skin
         alarmTable.skinProperty().addListener((obs, oldSkin, newSkin) -> applyHeaderStyle());
 
-        // Columnas de la tabla (sin Guidance)
+        // Table columns
         alarmTable.getColumns().add(column("Date/Time", "datetime", 140));
         alarmTable.getColumns().add(column("Severity", "severity", 85));
         alarmTable.getColumns().add(column("Location", "location", 160));
@@ -114,7 +137,7 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
         alarmTable.getColumns().add(column("User", "user", 80));
         alarmTable.getColumns().add(column("Host", "host", 130));
 
-        // 3. Colores de fila según severidad + menú contextual ("Acknowledge This" / "Acknowledge All")
+        // 3. Row colors based on severity + context menu (“Acknowledge This” / “Acknowledge All”)
         alarmTable.setRowFactory(tv -> {
             TableRow<Alarm> row = new TableRow<>() {
                 @Override
@@ -129,11 +152,21 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
                 }
             };
 
+            // Ensure that right-clicking selects the row before opening the ContextMenu
+            row.setOnMousePressed(e -> {
+                if (!row.isEmpty()) {
+                    alarmTable.getSelectionModel().select(row.getIndex());
+                }
+            });
+
             ContextMenu contextMenu = new ContextMenu();
 
             MenuItem ackThisItem = new MenuItem("Acknowledge This");
             ackThisItem.setOnAction(evt -> {
-                Alarm selected = row.getItem();
+                Alarm selected = alarmTable.getSelectionModel().getSelectedItem();
+                if (selected == null) {
+                    selected = row.getItem();
+                }
                 if (selected != null) {
                     acknowledgeAlarm(selected);
                 }
@@ -144,16 +177,19 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
 
             contextMenu.getItems().addAll(ackThisItem, ackAllItem);
 
-            // Mostrar menú contextual solo cuando la fila contiene una alarma válida
+            // Show the context menu only when the row contains a valid alarm
             row.contextMenuProperty().bind(
                     Bindings.when(row.emptyProperty())
                             .then((ContextMenu) null)
                             .otherwise(contextMenu)
             );
 
-            // Habilitar dinámicamente cada opción según el estado actual
+            // Dynamically enable each option based on the current status
             contextMenu.setOnShowing(evt -> {
-                Alarm item = row.getItem();
+                Alarm item = alarmTable.getSelectionModel().getSelectedItem();
+                if (item == null) {
+                    item = row.getItem();
+                }
                 boolean canAckThis = item != null && canAcknowledge(item.getSeverity());
                 boolean canAckAny = alarmData.stream().anyMatch(a -> canAcknowledge(a.getSeverity()));
 
@@ -164,18 +200,79 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
             return row;
         });
 
-        // 4. Añadir la tabla
+        // 4. Add the table
         getChildren().add(alarmTable);
 
         sceneProperty().addListener((obs, oldScene, newScene) -> setAttached(newScene != null));
 
-        reconfigure(bootstrapServers, topic);
+        reconfigure(bootstrapServers, topic, commandTopic);
     }
 
-    // ------------------------------------------------------------------
-    // Acknowledge hacia Phoebus Alarm Server (Kafka Command Topic)
-    // ------------------------------------------------------------------
+   /**
+    * Location Filter
+    * @param filter Area/location path prefix used to filter which alarms are displayed in the table
+    */
+    public void setLocationFilter(String filter) {
+        String normalized = normalizeLocationPrefix(filter);
+        if (!Objects.equals(this.locationFilter, normalized)) {
+            this.locationFilter = normalized;
+            runOnFx(this::applyLocationFilterToExistingRows);
+        }
+    }
 
+    public String getLocationFilter() {
+        return locationFilter;
+    }
+
+    
+    private static String normalizeLocationPrefix(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        String trimmed = raw.trim();
+        while (trimmed.startsWith("/")) {
+            trimmed = trimmed.substring(1);
+        }
+        while (trimmed.endsWith("/")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1);
+        }
+        return trimmed;
+    }
+
+    /**
+     * 
+     * @param formattedLocation Standardized text that should be compared to the text entered in the widget
+     * @return true if they match; otherwise, false
+     */
+    private boolean matchesLocationFilter(String formattedLocation) {
+        String filter = this.locationFilter;
+        if (filter == null || filter.isEmpty()) {
+            return true;
+        }
+        if (formattedLocation == null || formattedLocation.isEmpty()) {
+            return false;
+        }
+        return formattedLocation.equals(filter)
+                || formattedLocation.startsWith(filter + "/");
+    }
+
+    /**
+     * Remove from the list that populates the table any alarms that do not match the area filter
+     */
+    private void applyLocationFilterToExistingRows() {
+        String filter = this.locationFilter;
+        if (filter == null || filter.isEmpty()) {
+            return;
+        }
+        alarmData.removeIf(alarm -> !matchesLocationFilter(alarm.getLocation()));
+        alarmTable.refresh();
+    }
+
+   /**
+    * Acknowledgment to Phoebus Alarm Server (Kafka Command Topic)
+    * @param severity Current alarm status other than OK/NORMAL
+    * @return true if the alarm is active and unacknowledged (can be acknowledged); otherwise, false
+    */
     private static boolean canAcknowledge(String severity) {
         if (severity == null || severity.isBlank()) {
             return false;
@@ -187,7 +284,7 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
     }
 
     /**
-     * Reconoce una alarma individual ("Acknowledge This").
+     * Acknowledge an individual alarm (“Acknowledge This”).
      */
     public void acknowledgeAlarm(Alarm alarm) {
         if (alarm == null || !canAcknowledge(alarm.getSeverity())) {
@@ -197,7 +294,7 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
     }
 
     /**
-     * Reconoce todas las alarmas activas sin reconocer en la tabla ("Acknowledge All").
+     * Acknowledges all active alarms that have not been acknowledged in the table (“Acknowledge All”).
      */
     public void acknowledgeAllAlarms() {
         List<Alarm> pending = new ArrayList<>();
@@ -212,17 +309,33 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
     }
 
     /**
-     * Envía los comandos "acknowledge" al tópico "<topic>Command" de Kafka para una o varias alarmas
-     * y actualiza su estado visual a *_ACK.
+     * Verify that the topic used in Kafka ends with “Command”; if it does not, add it.
+     * @return Text to be used as the topic name for alarm recognition
+     */
+    private String resolveCommandTopic() {
+        if (commandTopic != null && !commandTopic.isBlank()) {
+            return commandTopic.trim();
+        }
+        if (topic != null && !topic.isBlank()) {
+            return topic.endsWith("Command") ? topic : topic + "Command";
+        }
+        return "";
+    }
+
+   
+    /**
+     * Sends “acknowledge” commands to the topic configured in the UI 
+     * (or “<topic>Command”) and updates its visual status to *_ACK.
+     * @param alarmsToAck List of alarms that should be sent to the acknowledgment thread
      */
     private void acknowledgeBatch(List<Alarm> alarmsToAck) {
+        final String targetCommandTopic = resolveCommandTopic();
         if (alarmsToAck == null || alarmsToAck.isEmpty()
                 || bootstrapServers == null || bootstrapServers.isEmpty()
-                || topic == null || topic.isEmpty()) {
+                || targetCommandTopic.isEmpty()) {
             return;
         }
 
-        final String commandTopic = topic.endsWith("Command") ? topic : topic + "Command";
         final String user = System.getProperty("user.name", "operator");
         final String host = resolveHostName();
 
@@ -235,7 +348,7 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
         try {
             jsonPayload = MAPPER.writeValueAsString(payload);
         } catch (Exception e) {
-            System.err.println("Error serializando comando acknowledge: " + e.getMessage());
+            LOGGER.info("Error serializing the acknowledge command: {}",e.getMessage());
             return;
         }
 
@@ -248,9 +361,14 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
 
             String fullPath = alarm.get("full_path");
             if (fullPath == null || fullPath.isEmpty()) {
-                String loc = alarm.getLocation();
+                String loc = normalizeLocationPrefix(alarm.getLocation());
                 String pv = alarm.getPv();
-                fullPath = (loc == null || loc.isEmpty()) ? pv : "/" + topic + "/" + loc + "/" + pv;
+                String rootTopic = normalizeLocationPrefix(topic);
+                if (loc.isEmpty()) {
+                    fullPath = "/" + rootTopic + "/" + pv;
+                } else {
+                    fullPath = "/" + rootTopic + "/" + loc + "/" + pv;
+                }
             }
 
             String commandKey = "command:" + fullPath;
@@ -258,7 +376,7 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
                 commandKeys.add(commandKey);
             }
 
-            // Actualización visual inmediata en la fila
+            // Immediate visual update in the queue
             Map<String, String> updatedFields = new HashMap<>(alarm.getFields());
             updatedFields.put("severity", alarm.getSeverity() + "_ACK");
             updatedFields.put("user", user);
@@ -277,29 +395,32 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
             return;
         }
 
-        // Publicación asíncrona en Kafka
+        // Asynchronous Publishing in Kafka
         Thread sender = new Thread(() -> {
             try {
                 KafkaProducer<String, String> producer = getOrCreateProducer();
                 if (producer != null) {
                     for (String key : commandKeys) {
-                        producer.send(new ProducerRecord<>(commandTopic, key, jsonPayload), (meta, ex) -> {
+                        producer.send(new ProducerRecord<>(targetCommandTopic, key, jsonPayload), (meta, ex) -> {
                             if (ex != null) {
-                                System.err.println("Error enviando acknowledge (" + key + ") a Kafka ("
-                                        + commandTopic + "): " + ex.getMessage());
+                                LOGGER.info("Error sending acknowledgment ({}) a Kafka ({}): {}", key, targetCommandTopic, ex.getMessage());
                             }
                         });
                     }
                     producer.flush();
                 }
             } catch (Exception e) {
-                System.err.println("Fallo al publicar acknowledge en Kafka: " + e.getMessage());
+                LOGGER.info("Error when publishing “acknowledge” to Kafka: {}", e.getMessage());
             }
         }, "kafka-alarm-ack");
         sender.setDaemon(true);
         sender.start();
     }
 
+    /**
+     * 
+     * @return Kafka producer: if it doesn't exist, it creates it and returns it
+     */
     private synchronized KafkaProducer<String, String> getOrCreateProducer() {
         if (disposed || bootstrapServers == null || bootstrapServers.isEmpty()) {
             return null;
@@ -314,6 +435,9 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
         return commandProducer;
     }
 
+    /**
+     * The Kafka producer closes
+     */
     private synchronized void closeProducer() {
         if (commandProducer != null) {
             try {
@@ -325,6 +449,10 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
         }
     }
 
+    /**
+     * 
+     * @return Host of the machine on which Phoebus is running
+     */
     private static String resolveHostName() {
         try {
             return InetAddress.getLocalHost().getHostName();
@@ -333,15 +461,20 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Modo RT / HTC
-    // ------------------------------------------------------------------
-
+ /**
+  * Mode RT / HTC
+  * @param newMode Sets the operating mode of the alarm table
+  ** RT: If an incoming alarm is received, the system checks to see if there is 
+  * a record that matches the PV; if there is a match, the parameters are updated. 
+  * If the alarm has a latch, its status in the table will not be updated until 
+  * it is acknowledged.
+  ** HTC: Add the alarms to the table as they appear, even if there are already
+  * records in the table.
+  */
     public void setAlarmMode(AlarmMode newMode) {
         AlarmMode targetMode = (newMode == null) ? AlarmMode.RT : newMode;
         if (this.mode != targetMode) {
             this.mode = targetMode;
-            // Si se cambia a RT en caliente, depurar duplicados dejando el registro más reciente por PV
             if (this.mode == AlarmMode.RT) {
                 runOnFx(this::deduplicateForRt);
             }
@@ -352,6 +485,9 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
         return mode;
     }
 
+    /**
+     * Uniqueness Validation for RT Mode
+     */
     private void deduplicateForRt() {
         List<Alarm> unique = new ArrayList<>();
         for (Alarm a : alarmData) {
@@ -364,7 +500,10 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
     }
 
     /**
-     * Compara únicamente por el nombre del PV.
+     * 
+     * @param a alarm temporarily stored in the uniqueness list for RT
+     * @param b alarm saved in the list used to populate the table
+     * @return true if both alarms belong to the same PV; otherwise, false
      */
     private static boolean isSamePv(Alarm a, Alarm b) {
         if (a == null || b == null) {
@@ -375,17 +514,24 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
         return !pvA.isEmpty() && Objects.equals(pvA, pvB);
     }
 
-    // ------------------------------------------------------------------
-    // Estilo (lo llama la representación de Phoebus)
-    // ------------------------------------------------------------------
-
+   /**
+    * 
+    * @param background the background color style that the widget will use in Phoebus
+    * @param foreground font color style that the widget will use in Phoebus
+    */
     public void setHeaderColors(Color background, Color foreground) {
         headerBackground = background;
         headerForeground = foreground;
         applyHeaderStyle();
     }
 
-    /** Configura los colores de fondo de fila para cada nivel de severidad. */
+    /**
+     * 
+     * @param major background color to be used to highlight the MAJOR-level alarm
+     * @param minor background color to be used to highlight the alarm with a MINOR severity
+     * @param invalid background color to be used to highlight the alarm with a INVALID severity
+     * @param ok background color to be used to highlight the alarm with a OK/NORMAL severity
+     */
     public void setSeverityColors(Color major, Color minor, Color invalid, Color ok) {
         if (major != null)   this.majorColor = major;
         if (minor != null)   this.minorColor = minor;
@@ -394,6 +540,11 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
         runOnFx(alarmTable::refresh);
     }
 
+    /**
+     * 
+     * @param severity Alarm Severity Level
+     * @return Background color associated with that severity level
+     */
     private Color resolveSeverityColor(String severity) {
         switch (baseSeverity(severity).toUpperCase(Locale.ROOT)) {
             case "MAJOR":
@@ -408,31 +559,51 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
         }
     }
 
+    /**
+     * 
+     * @param bg Color to format the row
+     * @return row formatted with the color style
+     */
     private static String buildRowCss(Color bg) {
         Color c = (bg == null) ? Color.WHITE : bg;
-        // Luminancia relativa para elegir contraste blanco o negro automáticamente
         double luminance = 0.299 * c.getRed() + 0.587 * c.getGreen() + 0.114 * c.getBlue();
         String textColor = (luminance < 0.5) ? "white" : "black";
         return "-fx-background-color: " + toRgba(c) + "; -fx-text-background-color: " + textColor + ";";
     }
 
-    /** Fuente exclusiva de la cabecera (títulos de columna). */
+    /**
+     * 
+     * @param font Customizing the Font in the Table Header
+     */
     public void setHeaderFont(Font font) {
         headerFont = font;
         applyHeaderStyle();
     }
 
+    /**
+     * 
+     * @param background Table background color
+     */
     public void setTableBackground(Color background) {
         tableBackground = background;
         refreshTableStyle();
     }
 
+    /**
+     * 
+     * @param font Customizing the Font of Table Rows
+     */
     public void setTableFont(Font font) {
         tableFont = font;
         refreshTableStyle();
         applyHeaderStyle();
     }
 
+    /**
+     * 
+     * @param f JavaFX Font object to convert into an inline CSS string
+     * @return CSS style sheet
+     */
     private static String fontToCss(Font f) {
         if (f == null) {
             return "";
@@ -463,7 +634,7 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
         try {
             alarmTable.setStyle(css.toString());
         } catch (Exception e) {
-            System.err.println("Error aplicando estilo a la tabla [" + css + "]: " + e);
+            LOGGER.info("Error applying style to table [{}]:  {}", css,  e.getMessage());
             alarmTable.setStyle("");
         }
     }
@@ -490,7 +661,7 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
                     }
                 }
             } catch (Exception e) {
-                System.err.println("Error aplicando estilo a la cabecera: " + e);
+                LOGGER.info("Error applying style to the header: {}", e);
             }
         });
     }
@@ -510,31 +681,56 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
                 c.getOpacity());
     }
 
+    // Protection Against Null Values in JavaFX Cells (Prevents NullPointerException in the FX Thread)
     private TableColumn<Alarm, String> column(String title, String key, double width) {
         TableColumn<Alarm, String> col = new TableColumn<>(title);
-        col.setCellValueFactory(cd -> new ReadOnlyStringWrapper(cd.getValue().get(key)));
+        col.setCellValueFactory(cd -> {
+            Alarm a = cd.getValue();
+            String val = (a == null) ? "" : a.get(key);
+            return new ReadOnlyStringWrapper(val == null ? "" : val);
+        });
         col.setPrefWidth(width);
         return col;
     }
 
-    // ------------------------------------------------------------------
-    // Configuración desde la UI
-    // ------------------------------------------------------------------
-
+   /**
+    * Reconfigures Kafka connection parameters from the UI
+    * @param newBootstrapServers Kafka broker host
+    * @param newTopic A Kafka topic that will be used to consume messages
+    */
     public synchronized void reconfigure(String newBootstrapServers, String newTopic) {
+        reconfigure(newBootstrapServers, newTopic, commandTopic);
+    }
+
+    /**
+     * 
+     * @param newBootstrapServers A new Kafka broker will be set up for your reference
+     * @param newTopic A new Kafka topic will be created for your reference
+     * @param newCommandTopic New Kafka command topic to be created for reference
+     */
+    public synchronized void reconfigure(String newBootstrapServers, String newTopic, String newCommandTopic) {
         String servers = newBootstrapServers == null ? "" : newBootstrapServers.trim();
         String top = newTopic == null ? "" : newTopic.trim();
+        String cmdTop = newCommandTopic == null ? "" : newCommandTopic.trim();
 
-        if (servers.equals(bootstrapServers) && top.equals(topic)) {
+        boolean consumerChanged = !servers.equals(bootstrapServers) || !top.equals(topic);
+        boolean producerChanged = !servers.equals(bootstrapServers) || !cmdTop.equals(commandTopic);
+
+        if (!consumerChanged && !producerChanged) {
             return;
         }
 
         bootstrapServers = servers;
         topic = top;
+        commandTopic = cmdTop;
 
-        closeProducer();
-        runOnFx(this::clearTable);
-        restartSession();
+        if (producerChanged) {
+            closeProducer();
+        }
+        if (consumerChanged) {
+            runOnFx(this::clearTable);
+            restartSession();
+        }
     }
 
     public String getBootstrapServers() {
@@ -543,6 +739,10 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
 
     public String getTopic() {
         return topic;
+    }
+
+    public String getCommandTopic() {
+        return commandTopic;
     }
 
     private synchronized void setAttached(boolean value) {
@@ -572,10 +772,9 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Consumidor Kafka
-    // ------------------------------------------------------------------
-
+ /**
+  * Kafka Consumer Task
+  */
     private final class ConsumerSession implements Runnable {
 
         private final String servers;
@@ -600,9 +799,9 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
             Properties props = new Properties();
             props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, servers);
             props.put(ConsumerConfig.GROUP_ID_CONFIG, "alarm-table-" + UUID.randomUUID());
-            props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
+            props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
             props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
-            props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "100");
+            props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "200");
             return new KafkaConsumer<>(props, new StringDeserializer(), new StringDeserializer());
         }
 
@@ -621,6 +820,9 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
 
                         List<Alarm> batch = new ArrayList<>();
                         for (ConsumerRecord<String, String> record : records) {
+                            if (record.key() == null || record.value() == null) {
+                                continue;
+                            }
                             Alarm alarm = parseAlarm(toAlarmFields(record.key(), record.value()));
                             if (alarm != null) {
                                 batch.add(alarm);
@@ -644,8 +846,7 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
                     }
                 } catch (Exception e) {
                     if (running) {
-                        System.err.println("Error en consumidor Kafka (" + servers + "/" + topicName
-                                + "): " + e.getMessage() + ". Reintentando...");
+                        LOGGER.info("Kafka consumer error ({}/{}): {}. Trying again...", servers, topicName, e.getMessage());
                         sleepQuietly(2000);
                     }
                 } finally {
@@ -664,10 +865,12 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Traducción del mensaje de Phoebus
-    // ------------------------------------------------------------------
-
+   /**
+    * Translation of Phoebus's message
+    * @param key PV Route According to the Phoebus Alarm Hierarchy
+    * @param json Phoebus Alarm Message
+    * @return Map containing the parsed alarm fields, or an empty map if the message is invalid or filtered out
+    */
     private Map<String, String> toAlarmFields(String key, String json) {
         Map<String, String> f = new HashMap<>();
         if (key == null || key.isBlank() || json == null || json.isBlank()) {
@@ -679,7 +882,7 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
             path = path.substring("state:".length());
         }
 
-        // Aceptar únicamente keys con la ruta completa de la variable ([sim|pva|loc]://...)
+        
         if (!PV_SCHEME_PATTERN.matcher(path).find()) {
             return f;
         }
@@ -696,12 +899,16 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
                 return f;
             }
 
-            // Conservar la ruta completa original para comandos "acknowledge"
+            String formattedLocation = formatLocation(parts[0]);
+            if (!matchesLocationFilter(formattedLocation)) {
+                return f;
+            }
+
+            // Preserve the original full path for “acknowledge” commands
             f.put("full_path", path);
-            f.put("location", formatLocation(parts[0]));
+            f.put("location", formattedLocation);
             f.put("pv", parts[1]);
 
-            // Extraer fecha/hora actualizada del mensaje (o Instant.now() si no viene)
             Instant instant = Instant.now();
             JsonNode t = node.path("time");
             if (t.isObject() && t.has("seconds")) {
@@ -724,7 +931,7 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
             f.put("user", node.path("user").asText(""));
             f.put("host", node.path("host").asText(""));
         } catch (Exception e) {
-            System.err.println("Mensaje inválido (key=" + key + "): " + e.getMessage());
+            LOGGER.info("Invalid message (key={}): {} ", key, e.getMessage());
             f.clear();
         }
         return f;
@@ -740,8 +947,10 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
     }
 
     /**
-     * Toma únicamente la ruta que está después del segundo '/'.
-     * Ejemplo: "/Prueba/factory/p1" -> "factory/p1"
+     * 
+     * @param rawLocation Part taken from the alarm hierarchy path 
+     * (e.g., "/Test/factory/p1"), where "Test" is the root alarm configuration name
+     * @return Location path without the root configuration prefix (e.g., "factory/p1")
      */
     private static String formatLocation(String rawLocation) {
         if (rawLocation == null || rawLocation.isEmpty()) {
@@ -759,8 +968,8 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
     }
 
     private static String formatValue(String value) {
-        if (value.isEmpty()) {
-            return value;
+        if (value == null || value.isEmpty()) {
+            return "";
         }
         try {
             return String.format(Locale.ROOT, "%.2f", Double.parseDouble(value));
@@ -783,10 +992,7 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
         }
     }
 
-    // ------------------------------------------------------------------
-    // WidgetBehavior
-    // ------------------------------------------------------------------
-
+ 
     @Override
     public void addAlarm(Alarm newAlarm) {
         if (newAlarm == null) {
@@ -794,8 +1000,6 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
         }
 
         if (mode == AlarmMode.RT) {
-            // Si existe un registro con el mismo PV (sea cual sea su severity),
-            // se reemplaza con todos los parámetros nuevos (incluyendo fecha y hora)
             int existingIdx = -1;
             for (int i = 0; i < alarmData.size(); i++) {
                 if (isSamePv(alarmData.get(i), newAlarm)) {
@@ -809,7 +1013,6 @@ public class AlarmTableWidget extends StackPane implements WidgetBehavior {
             }
         }
 
-        // Insertar al principio con los parámetros y fecha/hora actualizados
         alarmData.add(0, newAlarm);
         alarmTable.refresh();
         alarmTable.scrollTo(0);

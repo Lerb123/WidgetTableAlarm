@@ -1,3 +1,19 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.apache.plc4x.merlot.alarm.isa18_2.phoebus_widget;
 
 import javafx.scene.paint.Color;
@@ -10,16 +26,20 @@ import org.csstudio.display.builder.model.WidgetProperty;
 import org.csstudio.display.builder.model.properties.WidgetFont;
 import org.csstudio.display.builder.representation.javafx.widgets.RegionBaseRepresentation;
 import org.phoebus.ui.color.WidgetColor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class AlarmWidgetRepresentation extends RegionBaseRepresentation<AlarmTableWidget, AlarmWidget> {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(AlarmWidgetRepresentation.class);
     private final DirtyFlag dirtyKafka = new DirtyFlag();
     private final DirtyFlag dirtyStyle = new DirtyFlag();
     private final DirtyFlag dirtySize = new DirtyFlag();
 
     @Override
     protected AlarmTableWidget createJFXNode() throws Exception {
-        AlarmTableWidget node = new AlarmTableWidget(broker(), topic());
+        AlarmTableWidget node = new AlarmTableWidget(broker(), topic(), commandTopic());
+        node.setLocationFilter(model_widget.propLocationFilter().getValue());
         node.setAlarmMode(model_widget.propAlarmMode().getValue());
         applySize(node);
         applyStyle(node);
@@ -35,11 +55,13 @@ public class AlarmWidgetRepresentation extends RegionBaseRepresentation<AlarmTab
 
         model_widget.propBrokerKafka().addUntypedPropertyListener(this::kafkaChanged);
         model_widget.propTopicKafka().addUntypedPropertyListener(this::kafkaChanged);
+        model_widget.propCommandTopicKafka().addUntypedPropertyListener(this::kafkaChanged);
 
+        model_widget.propLocationFilter().addUntypedPropertyListener(this::styleChanged);
         model_widget.propAlarmMode().addUntypedPropertyListener(this::styleChanged);
         model_widget.propHeaderBackgroundColor().addUntypedPropertyListener(this::styleChanged);
         model_widget.propHeaderForegroundColor().addUntypedPropertyListener(this::styleChanged);
-        model_widget.propHeaderFontSize().addUntypedPropertyListener(this::styleChanged);
+        model_widget.propHeaderFont().addUntypedPropertyListener(this::styleChanged);
         model_widget.propMajorAlarmColor().addUntypedPropertyListener(this::styleChanged);
         model_widget.propMinorAlarmColor().addUntypedPropertyListener(this::styleChanged);
         model_widget.propInvalidAlarmColor().addUntypedPropertyListener(this::styleChanged);
@@ -72,7 +94,7 @@ public class AlarmWidgetRepresentation extends RegionBaseRepresentation<AlarmTab
             applySize(jfx_node);
         }
         if (dirtyKafka.checkAndClear()) {
-            jfx_node.reconfigure(broker(), topic());
+            jfx_node.reconfigure(broker(), topic(), commandTopic());
         }
         if (dirtyStyle.checkAndClear()) {
             applyStyle(jfx_node);
@@ -89,6 +111,7 @@ public class AlarmWidgetRepresentation extends RegionBaseRepresentation<AlarmTab
     }
 
     private void applyStyle(AlarmTableWidget node) {
+        node.setLocationFilter(model_widget.propLocationFilter().getValue());
         node.setAlarmMode(model_widget.propAlarmMode().getValue());
 
         try {
@@ -96,7 +119,7 @@ public class AlarmWidgetRepresentation extends RegionBaseRepresentation<AlarmTab
                     toColor(model_widget.propHeaderBackgroundColor().getValue()),
                     toColor(model_widget.propHeaderForegroundColor().getValue()));
         } catch (Exception e) {
-            System.err.println("Table Alarm: error en colores de cabecera: " + e);
+            LOGGER.info("Table Alarm: Error in header colors: {}", e.getMessage());
         }
         try {
             node.setSeverityColors(
@@ -105,20 +128,18 @@ public class AlarmWidgetRepresentation extends RegionBaseRepresentation<AlarmTab
                     toColor(model_widget.propInvalidAlarmColor().getValue()),
                     toColor(model_widget.propOkAlarmColor().getValue()));
         } catch (Exception e) {
-            System.err.println("Table Alarm: error en colores de severidad: " + e);
+            LOGGER.info("Table Alarm: Error in severity colors: {}", e.getMessage());
         }
         try {
             node.setTableBackground(toColor(model_widget.propBackgroundColor().getValue()));
         } catch (Exception e) {
-            System.err.println("Table Alarm: error en color de fondo: " + e);
+            LOGGER.info("Table Alarm: Background Color Error: {}", e.getMessage());
         }
         try {
-            WidgetFont baseFont = model_widget.propFont().getValue();
-            node.setTableFont(toFont(baseFont));
-            int headerSize = model_widget.propHeaderFontSize().getValue();
-            node.setHeaderFont(Font.font(baseFont.getFamily(), headerSize));
+            node.setTableFont(toFont(model_widget.propFont().getValue()));
+            node.setHeaderFont(toFont(model_widget.propHeaderFont().getValue()));
         } catch (Exception e) {
-            System.err.println("Table Alarm: error en la fuente: " + e);
+            LOGGER.info("Table Alarm: error in the font: {}", e.getMessage());
         }
         node.setDisable(!model_widget.propEnabled().getValue());
     }
@@ -142,6 +163,10 @@ public class AlarmWidgetRepresentation extends RegionBaseRepresentation<AlarmTab
 
     private String topic() {
         return toolkit.isEditMode() ? "" : model_widget.propTopicKafka().getValue();
+    }
+
+    private String commandTopic() {
+        return toolkit.isEditMode() ? "" : model_widget.propCommandTopicKafka().getValue();
     }
 
     @Override
